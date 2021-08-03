@@ -1,5 +1,5 @@
 using Ryujinx.Common.Logging;
-using Ryujinx.Graphics.Device;
+using Ryujinx.Graphics.Gpu.State;
 using System;
 using System.Collections.Generic;
 
@@ -13,7 +13,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.MME
         /// <summary>
         /// Arguments FIFO.
         /// </summary>
-        public Queue<int> Fifo { get; }
+        public Queue<FifoWord> Fifo { get; }
 
         private int[] _gprs;
 
@@ -34,7 +34,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.MME
         /// </summary>
         public MacroInterpreter()
         {
-            Fifo = new Queue<int>();
+            Fifo = new Queue<FifoWord>();
 
             _gprs = new int[8];
         }
@@ -45,7 +45,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.MME
         /// <param name="code">Code of the program to execute</param>
         /// <param name="state">Current GPU state</param>
         /// <param name="arg0">Optional argument passed to the program, 0 if not used</param>
-        public void Execute(ReadOnlySpan<int> code, IDeviceState state, int arg0)
+        public void Execute(ReadOnlySpan<int> code, GpuState state, int arg0)
         {
             Reset();
 
@@ -55,9 +55,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.MME
 
             FetchOpCode(code);
 
-            while (Step(code, state))
-            {
-            }
+            while (Step(code, state)) ;
 
             // Due to the delay slot, we still need to execute
             // one more instruction before we actually exit.
@@ -87,7 +85,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.MME
         /// <param name="code">Program code to execute</param>
         /// <param name="state">Current GPU state</param>
         /// <returns>True to continue execution, false if the program exited</returns>
-        private bool Step(ReadOnlySpan<int> code, IDeviceState state)
+        private bool Step(ReadOnlySpan<int> code, GpuState state)
         {
             int baseAddr = _pc - 1;
 
@@ -195,7 +193,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.MME
         /// </summary>
         /// <param name="state">Current GPU state</param>
         /// <returns>Operation result</returns>
-        private int GetAluResult(IDeviceState state)
+        private int GetAluResult(GpuState state)
         {
             AluOperation op = (AluOperation)(_opCode & 7);
 
@@ -364,14 +362,14 @@ namespace Ryujinx.Graphics.Gpu.Engine.MME
         /// <returns>The call argument, or 0 if the FIFO is empty</returns>
         private int FetchParam()
         {
-            if (!Fifo.TryDequeue(out int value))
+            if (!Fifo.TryDequeue(out var value))
             {
                 Logger.Warning?.Print(LogClass.Gpu, "Macro attempted to fetch an inexistent argument.");
 
                 return 0;
             }
 
-            return value;
+            return value.Word;
         }
 
         /// <summary>
@@ -380,9 +378,9 @@ namespace Ryujinx.Graphics.Gpu.Engine.MME
         /// <param name="state">Current GPU state</param>
         /// <param name="reg">Register offset to read</param>
         /// <returns>GPU register value</returns>
-        private int Read(IDeviceState state, int reg)
+        private static int Read(GpuState state, int reg)
         {
-            return state.Read(reg * 4);
+            return state.Read(reg);
         }
 
         /// <summary>
@@ -390,9 +388,11 @@ namespace Ryujinx.Graphics.Gpu.Engine.MME
         /// </summary>
         /// <param name="state">Current GPU state</param>
         /// <param name="value">Call argument</param>
-        private void Send(IDeviceState state, int value)
+        private void Send(GpuState state, int value)
         {
-            state.Write(_methAddr * 4, value);
+            MethodParams meth = new MethodParams(_methAddr, value);
+
+            state.CallMethod(meth);
 
             _methAddr += _methIncr;
         }
